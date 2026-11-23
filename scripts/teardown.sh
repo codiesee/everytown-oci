@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# Remove the Everytown OCI deployment: turns off Bedrock model invocation logging, empties the app's buckets, deletes
-# the app stack (with its CloudWatch dashboard, alarms and log groups), then the database stack (Aurora keeps a final
-# snapshot), then the Phoenix observability stack (its data volume keeps a final snapshot), then the artifact bucket.
-# Safe to re-run. Transaction Search stays on for the account.
-# Usage: scripts/teardown.sh [--yes]   Optional env: STACK, DB_STACK, OBS_STACK, AWS_REGION (same defaults as the
-#   deploy scripts).
+# Remove the Everytown OCI deployment: empties the app's buckets, deletes the app and database stacks
+# (Aurora keeps a final snapshot), then the artifact bucket. Regional logging settings stay unchanged.
+# Optional Phoenix observability stack is deleted only with DELETE_OBSERVABILITY_STACK=1.
+# Usage: scripts/teardown.sh [--yes]   Required env: EXPECTED_ACCOUNT_ID, AWS_REGION.
+#   Optional env: STACK, DB_STACK, OBS_STACK, DELETE_OBSERVABILITY_STACK.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 STACK=${STACK:-everytown-oci}
 DB_STACK=${DB_STACK:-everytown-oci-db}
 OBS_STACK=${OBS_STACK:-everytown-oci-obs}
-export AWS_DEFAULT_REGION=${AWS_REGION:-${AWS_DEFAULT_REGION:-us-west-2}}
+: "${EXPECTED_ACCOUNT_ID:?Set EXPECTED_ACCOUNT_ID to the intended 12-digit AWS account ID}"
+: "${AWS_REGION:?Set AWS_REGION to the intended deployment Region}"
+[[ "$EXPECTED_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] || { echo "EXPECTED_ACCOUNT_ID must be 12 digits." >&2; exit 1; }
+export AWS_DEFAULT_REGION=$AWS_REGION
 REGION=$AWS_DEFAULT_REGION
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+[[ "$ACCOUNT" = "$EXPECTED_ACCOUNT_ID" ]] || { echo "AWS account mismatch: expected $EXPECTED_ACCOUNT_ID, got $ACCOUNT." >&2; exit 1; }
 ARTIFACTS=oci-artifacts-$ACCOUNT-$REGION
 
 if [ "${1:-}" != --yes ]; then
@@ -21,7 +24,7 @@ if [ "${1:-}" != --yes ]; then
     echo "Refusing to run non-interactively without --yes." >&2
     exit 1
   fi
-  read -r -p "Delete stacks $STACK, $DB_STACK and $OBS_STACK (all assessments and Phoenix traces; final DB and Phoenix volume snapshots are kept) and bucket $ARTIFACTS in $REGION ($ACCOUNT)? Type 'delete': " answer
+  read -r -p "Delete stacks $STACK and $DB_STACK (all assessments; final DB snapshot is kept) and bucket $ARTIFACTS in $REGION ($ACCOUNT)? Type 'delete': " answer
   [ "$answer" = delete ] || { echo "Aborted."; exit 1; }
 fi
 
@@ -59,9 +62,6 @@ delete_stack() {
   aws cloudformation wait stack-delete-complete --stack-name "$1"
 }
 
-# 0. Bedrock invocation logging writes through a role in the app stack; switch it off before the role goes.
-aws bedrock delete-model-invocation-logging-configuration 2>/dev/null || true
-
 # 1. App stack. StoreBucket only exists on stacks deployed before v0.5.
 for key in SiteBucket DocsBucket StoreBucket; do
   bucket=$(out "$STACK" "$key")
@@ -74,9 +74,12 @@ CLUSTER_ID=$(out "$DB_STACK" DbClusterArn)
 CLUSTER_ID=${CLUSTER_ID##*:}
 delete_stack "$DB_STACK"
 
-# 2b. Phoenix observability stack (DeletionPolicy Snapshot keeps a final snapshot of the data volume).
-OBS_VOLUME=$(out "$OBS_STACK" DataVolumeId)
-delete_stack "$OBS_STACK"
+# 2b. Optional Phoenix observability stack (DeletionPolicy Snapshot keeps a final volume snapshot).
+OBS_VOLUME=
+if [ "${DELETE_OBSERVABILITY_STACK:-0}" = 1 ]; then
+  OBS_VOLUME=$(out "$OBS_STACK" DataVolumeId)
+  delete_stack "$OBS_STACK"
+fi
 
 # 3. Lambda artifacts (created by deploy.sh, outside CloudFormation).
 if aws s3api head-bucket --bucket "$ARTIFACTS" 2>/dev/null; then

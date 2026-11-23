@@ -36,9 +36,13 @@ Parameters:
     Description: Cap on concurrent Lambda runs (web requests and async AI worker runs share it); bounds Bedrock spend.
   MonthlyBudgetUsd:
     Type: Number
-    Default: 100
+    Default: 0
     MinValue: 0
-    Description: Monthly AWS cost budget in USD (tracking only, no alerts until a subscriber is added). 0 skips it, for accounts that deny budgets:ModifyBudget.
+    Description: Account-wide monthly AWS cost budget in USD, not limited to this app. 0 skips it; recommended in a shared account.
+  BudgetAlertEmail:
+    Type: String
+    Default: ""
+    Description: Email to notify at 80% of actual monthly budget and 100% of forecast monthly budget. Empty creates no notifications.
   PhoenixEndpoint:
     Type: String
     Default: ""
@@ -51,6 +55,7 @@ Parameters:
 
 Conditions:
   CreateBudget: !Not [!Equals [!Ref MonthlyBudgetUsd, 0]]
+  HasBudgetAlertEmail: !Not [!Equals [!Ref BudgetAlertEmail, ""]]
 
 Resources:
   SiteBucket:
@@ -534,12 +539,6 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
 
-  # Cost tracking only. To get email alerts, add under Properties:
-  #   NotificationsWithSubscribers:
-  #     - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE }
-  #       Subscribers: [{ SubscriptionType: EMAIL, Address: you@example.org }]
-  #     - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
-  #       Subscribers: [{ SubscriptionType: EMAIL, Address: you@example.org }]
   MonthlyBudget:
     Type: AWS::Budgets::Budget
     Condition: CreateBudget
@@ -551,6 +550,17 @@ Resources:
         BudgetLimit:
           Amount: !Ref MonthlyBudgetUsd
           Unit: USD
+      NotificationsWithSubscribers: !If
+        - HasBudgetAlertEmail
+        - - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE }
+            Subscribers:
+              - SubscriptionType: EMAIL
+                Address: !Ref BudgetAlertEmail
+          - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
+            Subscribers:
+              - SubscriptionType: EMAIL
+                Address: !Ref BudgetAlertEmail
+        - !Ref AWS::NoValue
 
 Outputs:
   AppUrl:

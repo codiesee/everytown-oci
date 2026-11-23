@@ -175,7 +175,7 @@ class Api(unittest.TestCase):
         self.assertTrue(pdf.data.startswith(b"%PDF"))
 
     def test_finishing_a_week_celebrates_once(self):
-        self.stored.return_value = {"w1-1": T0 + timedelta(hours=1), "w1-2": None}
+        self.stored.return_value = {"w1-1": datetime.now(timezone.utc) - timedelta(minutes=30), "w1-2": None}
         body = self.client.post("/api/assessments/%s/roadmap/tasks/w1-2" % SID, json={"done": True}).get_json()
         self.assertEqual(body["celebrate"]["weeks"], [1])
         self.assertEqual(body["celebrate"]["opened"], [2])

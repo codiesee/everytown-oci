@@ -183,7 +183,7 @@ All data is synthetic. `assessments.doc` holds the full rendered document as `js
 | `report_feedback`, `report_reviews` | `features/feedback.sql` | "Does this feel right?" answers (one per report section) and staff review status (reviewed or flagged with an issue). |
 | `optins` | `features/optin.sql` | Optional sign-up for CSF trainings and updates, with a name and email. |
 
-Migrations are idempotent (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, backfills only where empty): `python3 -m db migrate` runs `schema.sql` then every `features/*.sql`. `python3 -m db seed` replaces the seed rows with 20 synthetic organizations (a few with two assessments, a few across two states) and calls each feature module's `seed(rnd)` hook for synthetic feedback, opt-ins and drafts. Deploys run both.
+Migrations are idempotent (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, backfills only where empty): `python3 -m db migrate` runs `schema.sql` then every `features/*.sql`. `python3 -m db seed` replaces the seed rows with 20 synthetic organizations (a few with two assessments, a few across two states) and calls each feature module's `seed(rnd)` hook for synthetic feedback, opt-ins and drafts. Deploys run migrations; seeding requires `SEED_SYNTHETIC_DATA=1`.
 
 ---
 
@@ -342,7 +342,7 @@ Astro 5 static site in `frontend/`, TypeScript modules, no UI framework, one sty
 
 ### Deploy (`scripts/deploy.sh`)
 
-One idempotent script: database stack, frontend build, Lambda zip (uploaded under a content hash), app stack, CloudWatch Transaction Search and Bedrock invocation logging (account settings CloudFormation cannot set), site upload (fingerprinted assets cached a year, HTML always revalidated, the 404 page tagged for status 404), CloudFront invalidation, `db migrate` and `db seed`, Knowledge Base sync and ingestion. Options: `MONTHLY_BUDGET_USD=0` (this sandbox denies budgets), `DB_MIN_CAPACITY=0` (auto-pause), `RESERVED_CONCURRENCY`, `EXTRA_DOCS`. The session secret is generated once into `infra/.secret` (git-ignored). `scripts/teardown.sh` deletes every stack after typing "delete" (Phoenix keeps a final snapshot).
+One script deploys the database stack, frontend build, Lambda zip (uploaded under a content hash), app stack, site upload (fingerprinted assets cached a year, HTML always revalidated, the 404 page tagged for status 404), CloudFront invalidation, `db migrate`, Knowledge Base sync and ingestion. It requires `EXPECTED_ACCOUNT_ID` and `AWS_REGION`; optional `VPC_ID` and `SUBNET_IDS` select the network. `SEED_SYNTHETIC_DATA=1` explicitly replaces demo rows. `DB_MIN_CAPACITY=0` enables auto-pause. `MONTHLY_BUDGET_USD` defaults to 0 because the budget tracks the entire AWS account; when enabled, `BUDGET_ALERT_EMAIL` adds notifications. Shared account/Region Transaction Search and Bedrock invocation logging settings are left untouched. The session secret is generated once into `infra/.secret` (git-ignored). `scripts/teardown.sh` deletes the app and database stacks after typing "delete"; the Phoenix stack is deleted only with `DELETE_OBSERVABILITY_STACK=1`.
 
 ### Configuration
 
@@ -514,7 +514,7 @@ The e2e agent needs AWS keys in the environment; on an EC2 instance role run `ev
 
 ### Deploy and tear down
 
-`MONTHLY_BUDGET_USD=0 scripts/deploy.sh` (about 2 minutes; also migrates and re-seeds), `scripts/teardown.sh` after judging. Re-seeding gives seed organizations new ids; the Riverbend sample report (`5c818adc-...`) used by the demo and tests is not a seed row.
+Set `EXPECTED_ACCOUNT_ID` and `AWS_REGION` for both `scripts/deploy.sh` and `scripts/teardown.sh`. For a fresh synthetic demo, set `SEED_SYNTHETIC_DATA=1` on the first deploy; later deploys migrate without replacing seed rows. Re-seeding gives seed organizations new ids; the Riverbend sample report (`5c818adc-...`) used by the demo and tests is not a seed row.
 
 ### Troubleshooting
 

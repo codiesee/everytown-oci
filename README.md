@@ -231,15 +231,14 @@ Two CloudFormation stacks:
 Requirements: AWS CLI v2, Python 3 with pip and boto3, Node 20+, `zip`, credentials in the environment, Bedrock model access for Anthropic Claude and Titan Text Embeddings v2.
 
 ```
-scripts/deploy.sh                      # db stack, site build, Lambda zip, app stack, site sync + invalidation, db migrate/seed, KB ingest
-MONTHLY_BUDGET_USD=0 scripts/deploy.sh # this hackathon sandbox denies budget creation; elsewhere leave the default ($100 budget)
-DB_MIN_CAPACITY=0 scripts/deploy.sh    # Aurora auto-pause after 1 idle hour (about 15 s resume on the next request)
-scripts/teardown.sh                    # after judging: empty the buckets, delete both stacks (asks you to type "delete")
+EXPECTED_ACCOUNT_ID=123456789012 AWS_REGION=us-west-2 DB_MIN_CAPACITY=0 SEED_SYNTHETIC_DATA=1 scripts/deploy.sh
+EXPECTED_ACCOUNT_ID=123456789012 AWS_REGION=us-west-2 scripts/deploy.sh  # later redeploy; preserves seed rows
+EXPECTED_ACCOUNT_ID=123456789012 AWS_REGION=us-west-2 scripts/teardown.sh  # destructive; asks you to type "delete"
 ```
 
-Optional env: `STACK`, `DB_STACK`, `AWS_REGION`, `EXTRA_DOCS` (extra public Knowledge Base documents), `RESERVED_CONCURRENCY` (default 10), `MONTHLY_BUDGET_USD` (default 100, 0 skips the budget). The script is idempotent: the Lambda zip is uploaded under a content-hash key to `oci-artifacts-<account>-<region>`, the Flask session secret is generated once into `infra/.secret` (git-ignored), and fingerprinted `_astro/*` assets get a one-year cache while HTML is always revalidated. Cost: about $45 a month at the 0.5 ACU Aurora minimum (kept warm for the hackathon), about $1 to $3 a month with auto-pause, plus roughly $0.05 to $0.10 of Bedrock tokens per report (the static prompt is cached). `scripts/teardown.sh` also deletes the artifact bucket and keeps a final Aurora snapshot.
+Replace the example account ID with the intended AWS account. Both scripts stop if the active credentials identify another account. `AWS_REGION` is required. Optional env: `STACK`, `DB_STACK`, `VPC_ID`, `SUBNET_IDS` (comma-separated), `EXTRA_DOCS` (extra public Knowledge Base documents), `RESERVED_CONCURRENCY` (default 10), `MONTHLY_BUDGET_USD` (default 0), `BUDGET_ALERT_EMAIL`, and `RECORD_GITHUB_DEPLOYMENT=1`. Seeding replaces synthetic organizations, so request it explicitly only for a fresh demo. The budget, when enabled, tracks the **whole AWS account**, including other projects, and can email the supplied recipient; it is off by default in a shared account. An email recipient must verify the AWS Budgets subscription. The Lambda zip is uploaded under a content-hash key to `oci-artifacts-<account>-<region>`, the Flask session secret is generated once into `infra/.secret` (git-ignored), and fingerprinted `_astro/*` assets get a one-year cache while HTML is always revalidated. `scripts/teardown.sh` deletes the artifact bucket and keeps a final Aurora snapshot; it leaves the optional Phoenix stack unless `DELETE_OBSERVABILITY_STACK=1` is set.
 
-Each successful deploy is recorded as a [GitHub Deployment](https://github.com/ArielleTolome/everytown-oci/deployments) when the GitHub CLI (`gh`) is signed in: environment = the stack name (`everytown-oci`), the deployed commit and its `git describe` tag, and the live URL. Push the commit first; if recording fails, the script only warns.
+GitHub Deployment recording is optional through `RECORD_GITHUB_DEPLOYMENT=1` when `gh` is signed in and the commit has been pushed.
 
 ### Configuration
 
@@ -278,14 +277,14 @@ flowchart LR
 
 | AWS service | What it holds |
 |---|---|
-| **CloudWatch Transaction Search** (X-Ray) | One trace per report and per coach, staff or read-aloud request (service `everytown-oci`; eval runs are `everytown-oci-evals`). Spans use OpenInference and `gen_ai.*` attributes, so CloudWatch generative AI observability and Omni read the model calls. |
-| **Bedrock model invocation logging** | Every Claude call's input and output text in `/aws/bedrock/everytown-oci/model-invocations` (14 days), behind the prebuilt Model Invocations view. |
+| **CloudWatch Transaction Search** (X-Ray) | If separately enabled for the account and Region, traces use OpenInference and `gen_ai.*` attributes. The default shared-account deploy leaves this setting untouched. |
+| **Bedrock model invocation logging** | If separately enabled for the account and Region, Claude input and output text can be sent to `/aws/bedrock/everytown-oci/model-invocations` (14 days). The default shared-account deploy leaves this setting untouched. |
 | **CloudWatch metrics** | `AWS/Bedrock` (invocations, tokens, latency by model), `EverytownOCI/Quality` (`CheckScore` and `CheckFailed` by `Check`, from the code checks run on every live report) and `EverytownOCI/Evals` (`MeanScore` and `PassRate` by `Suite` and `Evaluator`, `GateFailures`, `CostUSD`). |
 | **CloudWatch Logs** | `/everytown-oci/evals`: one event per eval example and one summary per run, for Logs Insights comparisons. |
 | **CloudWatch dashboard and alarms** | Dashboard `everytown-oci` (stack output `DashboardUrl`); alarms `everytown-oci-report-grounding` (a live report failed the grounded check) and `everytown-oci-app-errors`. |
 | **Arize Phoenix** (stack `everytown-oci-obs`) | The same traces in project `everytown-oci` (evals in `everytown-oci-evals`), plus eval datasets and experiments with every evaluator score. |
 
-`scripts/deploy.sh` turns on the two account settings CloudFormation cannot (idempotent): Transaction Search (a CloudWatch Logs resource policy for X-Ray plus `update-trace-segment-destination CloudWatchLogs`, active about 10 minutes after the first time) and Bedrock model invocation logging to the stack's log group through `BedrockLoggingRole`. The Lambda has `OCI_TRACES=xray` and the `AWSXrayWriteOnlyAccess` managed policy; `observability.py` signs the OTLP requests itself (botocore SigV4), so there is no collector, layer or extra package. Locally, set `OCI_TRACES=xray` (CloudWatch) and/or `OCI_PHOENIX_ENDPOINT` plus `OCI_PHOENIX_API_KEY` (Phoenix) to trace a dev run; with neither, tracing is off.
+`scripts/deploy.sh` leaves account and Region logging settings unchanged. CloudWatch Transaction Search and Bedrock model invocation logging require a separate review and configuration in shared accounts; the corresponding detailed trace and model-input/output views are unavailable until enabled. App-specific Lambda logs, metrics, dashboard and alarms still deploy. The Lambda has `OCI_TRACES=xray` and the `AWSXrayWriteOnlyAccess` managed policy; `observability.py` signs OTLP requests with botocore SigV4. Locally, set `OCI_TRACES=xray` and/or `OCI_PHOENIX_ENDPOINT` plus `OCI_PHOENIX_API_KEY` to trace a dev run; with neither, tracing is off.
 
 #### Phoenix
 
