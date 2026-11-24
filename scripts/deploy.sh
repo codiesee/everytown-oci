@@ -6,7 +6,7 @@
 #   VPC_ID, SUBNET_IDS (comma-separated; otherwise discover default VPC/subnets),
 #   DB_MIN_CAPACITY (Aurora ACUs; 0 = auto-pause after an idle hour), EXTRA_DOCS (dir of extra KB docs),
 #   RESERVED_CONCURRENCY (Lambda cap, template default 10), MONTHLY_BUDGET_USD (account-wide cost budget;
-#   template default 0 skips it in a shared account), BUDGET_ALERT_EMAIL,
+#   template default 0 skips it in a shared account), BUDGET_ALERT_EMAIL, ALARM_EMAIL,
 #   SEED_SYNTHETIC_DATA=1 (explicitly replace demo organizations), RECORD_GITHUB_DEPLOYMENT=1.
 #   Unset values keep the stack's previous setting.
 # Shared account/Region observability settings are intentionally left untouched. CloudWatch Transaction Search and
@@ -86,6 +86,7 @@ APP_PARAMS=(CodeBucket="$ARTIFACTS" CodeKey="$KEY" SecretKey="$(cat infra/.secre
 [ -n "${RESERVED_CONCURRENCY:-}" ] && APP_PARAMS+=(ReservedConcurrency="$RESERVED_CONCURRENCY")
 [ -n "${MONTHLY_BUDGET_USD:-}" ] && APP_PARAMS+=(MonthlyBudgetUsd="$MONTHLY_BUDGET_USD")
 [ -n "${BUDGET_ALERT_EMAIL:-}" ] && APP_PARAMS+=(BudgetAlertEmail="$BUDGET_ALERT_EMAIL")
+[ -n "${ALARM_EMAIL:-}" ] && APP_PARAMS+=(AlarmEmail="$ALARM_EMAIL")
 if [ -s infra/.phoenix.env ]; then
   # shellcheck source=/dev/null
   APP_PARAMS+=("PhoenixEndpoint=$(. infra/.phoenix.env; printf %s "${PHOENIX_URL:-}")"

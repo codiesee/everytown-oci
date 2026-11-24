@@ -43,6 +43,10 @@ Parameters:
     Type: String
     Default: ""
     Description: Email to notify at 80% of actual monthly budget and 100% of forecast monthly budget. Empty creates no notifications.
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: Email for OCI app error and report grounding alarms. Empty leaves alarm notifications disabled; recipient must confirm the SNS subscription.
   PhoenixEndpoint:
     Type: String
     Default: ""
@@ -56,6 +60,7 @@ Parameters:
 Conditions:
   CreateBudget: !Not [!Equals [!Ref MonthlyBudgetUsd, 0]]
   HasBudgetAlertEmail: !Not [!Equals [!Ref BudgetAlertEmail, ""]]
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
 
 Resources:
   SiteBucket:
@@ -509,11 +514,46 @@ Resources:
         - Fn: !Sub ${AWS::StackName}-app
           BedrockLogs: !Ref BedrockInvocationLogGroup
 
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlarmEmail
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-alarms
+
+  AlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Condition: HasAlarmEmail
+    Properties:
+      Topics: [!Ref AlarmTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudWatchAlarmPublish
+            Effect: Allow
+            Principal: { Service: cloudwatch.amazonaws.com }
+            Action: sns:Publish
+            Resource: !Ref AlarmTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnEquals:
+                aws:SourceArn:
+                  - !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${AWS::StackName}-report-grounding
+                  - !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${AWS::StackName}-app-errors
+
+  AlarmSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+      TopicArn: !Ref AlarmTopic
+
   GroundingAlarm:  # a live report shipped an action that cites no growth priority: the validator should make this impossible
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub ${AWS::StackName}-report-grounding
-      AlarmDescription: A live report failed the grounded check (evals/checks.py). Open the trace in Transaction Search.
+      AlarmDescription: A live report failed the grounded check (evals/checks.py). Review the OCI dashboard and app logs.
       Namespace: EverytownOCI/Quality
       MetricName: CheckFailed
       Dimensions: [{ Name: Check, Value: grounded }]
@@ -523,6 +563,7 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
 
   ErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -538,6 +579,7 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
 
   MonthlyBudget:
     Type: AWS::Budgets::Budget
