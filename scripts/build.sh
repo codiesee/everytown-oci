@@ -20,6 +20,6 @@ mkdir -p build/pkg/frontend/public
 cp -r frontend/public/fonts build/pkg/frontend/public/
 find build/pkg -name __pycache__ -type d -prune -exec rm -rf {} +
 # Fixed mtimes keep the zip (and its content-hash S3 key) stable across identical builds.
-find build/pkg -exec touch -h -d @315532800 {} +
+find build/pkg -exec touch -h -t 198001010000.00 {} +
 (cd build/pkg && find . -type f | LC_ALL=C sort | zip -qX -@ ../oci.zip)
 echo "built build/oci.zip ($(du -h build/oci.zip | cut -f1))"
